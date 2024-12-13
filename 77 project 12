@@ -43,7 +43,7 @@ pygame.display.set_caption('Electric Arc Simulation with Custom Graphics')
 
 # Load custom images
 background_img = pygame.image.load("lab.jpg").convert()  # Background image
-electrode_img = pygame.image.load("101.png").convert_alpha()  # Electrode image
+electrode_img = pygame.image.load("electrode.png").convert_alpha()  # Electrode image
 electrode_width, electrode_height = 40, 40 
 electrode_img = pygame.transform.scale(electrode_img, (electrode_width, electrode_height))
 
@@ -113,12 +113,42 @@ def calculate_arc_properties(voltage, pressure, distance):
 
     return thickness, jaggedness, brightness, pressure
 
+# Global or class-level state
+arc_established = False
+initial_breakdown_conditions = None  # Store (pressure, distance, breakdown_voltage) at arc formation
+
+def can_arc_form(voltage, pressure, distance):
+    global arc_established, initial_breakdown_conditions
+    current_bd_voltage = calculate_breakdown_voltage(pressure, distance)
+    
+    if arc_established:
+        if initial_breakdown_conditions is not None:
+            _, _, initial_bd_voltage = initial_breakdown_conditions
+            hysteresis_factor = 0.8  # Adjust this as needed
+            threshold_voltage = initial_bd_voltage * hysteresis_factor
+            
+            if voltage >= threshold_voltage:
+                return True
+            else:
+                arc_established = False
+                initial_breakdown_conditions = None
+                return False
+        else:
+            # If for some reason initial conditions are missing, revert to standard logic
+            arc_established = False
+            return voltage >= current_bd_voltage
+    else:
+        # Arc not established yet; must meet full breakdown criteria
+        if voltage >= current_bd_voltage:
+            arc_established = True
+            initial_breakdown_conditions = (pressure, distance, current_bd_voltage)
+            return True
+        else:
+            return False
+
+
 # Function to generate the arc
-def generate_arc(start, end, jaggedness=30, voltage=100, amperage=10, pressure=1.0, max_y_deviation=150, max_thickness=28):
-    breakdown_voltage = calculate_breakdown_voltage(pressure, electrode_distance)
-    if voltage < breakdown_voltage:
-        debug_log(f"Voltage insufficient: {voltage}V < Breakdown Voltage: {breakdown_voltage:.2f}V")
-        return   
+def generate_arc(start, end, jaggedness=30, voltage=100, amperage=10, pressure=1.0, max_y_deviation=150, max_thickness=28): 
 
     thickness, jaggedness, brightness, pressure = calculate_arc_properties(voltage, pressure,jaggedness)
     thickness = min(thickness, max_thickness)
@@ -192,7 +222,11 @@ while running:
 
     start_point = (electrode1_x, electrode_y)
     end_point = (electrode2_x, electrode_y)
-    generate_arc(start_point, end_point, jaggedness=50, voltage=voltage, amperage=amperage, pressure=pressure)
+    if can_arc_form(voltage, pressure, electrode_distance):
+        generate_arc(start_point, end_point, jaggedness=50, voltage=voltage, amperage=amperage, pressure=pressure)
+    else:
+        #no arc can be drawn without conditions being met
+        pass
     # Draw electrodes
     screen.blit(electrode_img, (start_point[0] - electrode_img.get_width() // 2, start_point[1] - electrode_img.get_height() // 2))
     screen.blit(electrode_img, (end_point[0] - electrode_img.get_width() // 2, end_point[1] - electrode_img.get_height() // 2))
