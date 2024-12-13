@@ -1,0 +1,228 @@
+import pygame
+import random
+import math 
+
+DEBUG = True
+
+def debug_log(message):
+    if DEBUG:
+        print(message)
+
+# Initialize Pygame
+pygame.init()
+pygame.font.init()  # Initialize font module
+font = pygame.font.Font(None, 24)  
+
+
+# Parameters
+electrode_distance = .005
+voltage = 100
+amperage = 10
+pressure = 20
+
+# Gas properties: A, B, gamma
+gas_types = {
+    "Air": {"A": 112.5, "B": 2737, "gamma": 0.02, "color": (255, 255, 255)},  # White
+    "Helium": {"A": 24.6, "B": 97.7, "gamma": 0.015, "color": (251, 197, 207)},  # Gold
+    "Argon": {"A": 116.0, "B": 2270, "gamma": 0.058, "color": (128, 0, 255)},  # Purple
+    "Neon": {"A": 105.0, "B": 3100, "gamma": 0.022, "color": (135, 206, 250)}  # Light Blue
+}
+
+# Default gas
+current_gas = "Air"
+
+
+# Set up display
+width, height = 800, 600
+screen = pygame.display.set_mode((width, height))
+scale = width * 100  
+
+ 
+
+pygame.display.set_caption('Electric Arc Simulation with Custom Graphics')
+
+# Load custom images
+background_img = pygame.image.load("lab.jpg").convert()  # Background image
+electrode_img = pygame.image.load("101.png").convert_alpha()  # Electrode image
+electrode_width, electrode_height = 40, 40 
+electrode_img = pygame.transform.scale(electrode_img, (electrode_width, electrode_height))
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+
+# Button layout
+button_width, button_height = 100, 40
+button_margin = 20
+buttons = []
+start_x = 50
+start_y = height - (button_height + button_margin)
+
+# Create buttons for each gas
+for i, gas in enumerate(gas_types):
+    button_x = start_x + i * (button_width + button_margin)
+    buttons.append({"rect": pygame.Rect(button_x, start_y, button_width, button_height), "label": gas})
+
+
+# slider settings
+distance_min, distance_max = 0.001, 0.01    # Distance range in m
+voltage_min, voltage_max = 0, 3000      # Voltage range in V
+pressure_min, pressure_max = 10, 500  # Pressure range in Pa
+slider_length = 200
+slider_height = 10
+slider_y_positions = {'voltage': 50, 'distance': 100, 'pressure': 150}
+
+
+debug_log(f"Pressure Passed to calculate_breakdown_voltage: {pressure}")
+def calculate_breakdown_voltage(pressure, distance):
+    # Avoid calculation errors by ensuring p*d is positive and within valid range
+    if pressure * distance <= 0:
+        return float('inf')  # Infinite voltage needed if conditions aren't met
+    properties = gas_types[current_gas]
+    A = properties["A"]
+    B = properties["B"]
+    gamma = properties["gamma"]
+
+    try:
+        ln_term = math.log(A * pressure * distance) - math.log(math.log(1 + (1 / gamma)))
+        breakdown_voltage = (B * pressure * distance) / ln_term
+    except (ValueError, ZeroDivisionError):
+        breakdown_voltage = float('inf')  # Infinite voltage if conditions lead to invalid math
+    
+    debug_log(f"Pressure in calculate_breakdown_voltage: {pressure}")
+
+
+    return breakdown_voltage
+
+def adjust_slider_with_scroll(event, x, y, length, value, min_value, max_value, step):
+    mouse_x, mouse_y = pygame.mouse.get_pos()
+    # Check if mouse is hovering over the slider area
+    if x <= mouse_x <= x + length and y <= mouse_y <= y + slider_height:
+        # Adjust value with mouse wheel scroll
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 4:  # Scroll up
+                value = min(value + step, max_value)
+            elif event.button == 5:  # Scroll down
+                value = max(value - step, min_value)
+    return value
+
+def calculate_arc_properties(voltage, pressure, distance):  
+    thickness = max(1, int(10*voltage/(pressure))-distance)
+    jaggedness = max(5, int((voltage/(pressure))*(distance/100)))
+    brightness = max(150, int(voltage/pressure ))
+
+    return thickness, jaggedness, brightness, pressure
+
+# Function to generate the arc
+def generate_arc(start, end, jaggedness=30, voltage=100, amperage=10, pressure=1.0, max_y_deviation=150, max_thickness=28):
+    breakdown_voltage = calculate_breakdown_voltage(pressure, electrode_distance)
+    if voltage < breakdown_voltage:
+        debug_log(f"Voltage insufficient: {voltage}V < Breakdown Voltage: {breakdown_voltage:.2f}V")
+        return   
+
+    thickness, jaggedness, brightness, pressure = calculate_arc_properties(voltage, pressure,jaggedness)
+    thickness = min(thickness, max_thickness)
+    
+    color_variation = max(1, int((1-pressure)+ voltage/50))
+    base_color = gas_types[current_gas]["color"]
+    points = [start]
+    num_segments = 22
+    for i in range(1, num_segments):
+        random_x = random.randint(-jaggedness, jaggedness)
+        random_y = random.randint(-max_y_deviation, max_y_deviation)*1.3
+        x = start[0] + i * (end[0] - start[0]) / num_segments + random_x
+        y = start[1] + random_y
+        points.append((x, y))
+    points.append(end)
+
+    debug_log(f"Arc Properties - Thickness: {thickness}, Jaggedness: {jaggedness}, "
+              f"Brightness: {brightness}, Pressure: {pressure}")
+
+    for i in range(len(points) - 1):
+        try:
+            # Create per-segment color variation
+            segment_color = (
+                max(0, min(255, base_color[0] + random.randint(-color_variation, color_variation))),
+                max(0, min(255, base_color[1] + random.randint(-color_variation, color_variation))),
+                max(0, min(255, base_color[2] + random.randint(-color_variation, color_variation))), 128
+            )
+            pygame.draw.line(screen, segment_color, points[i], points[i + 1], thickness)
+        except ValueError as e:
+            debug_log(f"Error drawing arc segment: {e}")
+
+        # Add branches with slight color shifts
+        if amperage > 5 and random.random() < amperage / 50:
+            try:
+                branch_end = (points[i][0] + random.randint(-50, 50), points[i][1] + random.randint(-50, 50))
+                branch_color = (
+                    max(0, min(255, segment_color[0] - random.randint(0, 50))),
+                    max(0, min(255, segment_color[1] - random.randint(0, 50))),
+                    max(0, min(255, segment_color[2] + random.randint(0, 50)))
+                )
+                pygame.draw.line(screen, branch_color, points[i], branch_end, max(1, thickness - 1))
+            except ValueError as e:
+                debug_log(f"Error drawing branch: {e}")
+
+
+def draw_slider(x, y, length, value, min_value, max_value, label, unit):
+    pygame.draw.rect(screen, WHITE, (x, y, length, slider_height))
+    handle_pos = x + ((value - min_value) / (max_value - min_value)) * length
+    pygame.draw.rect(screen, (255, 0, 0), (handle_pos - 5, y - 5, 10, slider_height + 10))
+    font = pygame.font.SysFont(None, 24)
+    display_value = value / 1000 if unit == "kPa" else value
+    text = font.render(f"{label}: {display_value:.2f} {unit}", True, BLACK)
+    screen.blit(text, (x + length + 20, y - 5))
+
+# Main loop
+running = True
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        voltage = adjust_slider_with_scroll(event, 50, slider_y_positions['voltage'], slider_length, voltage, voltage_min, voltage_max, step=50)
+        electrode_distance = adjust_slider_with_scroll(event, 50, slider_y_positions['distance'], slider_length, electrode_distance, distance_min, distance_max, step=.001)
+        pressure = adjust_slider_with_scroll(event, 50, slider_y_positions['pressure'], slider_length, pressure, pressure_min, pressure_max, step=10)
+    
+    screen.blit(background_img, (0, 0))
+
+    electrode1_x = (width - electrode_distance * scale) // 2
+    electrode2_x = (width + electrode_distance * scale) // 2
+    electrode_y = height // 2  # center of the screen
+
+    start_point = (electrode1_x, electrode_y)
+    end_point = (electrode2_x, electrode_y)
+    generate_arc(start_point, end_point, jaggedness=50, voltage=voltage, amperage=amperage, pressure=pressure)
+    # Draw electrodes
+    screen.blit(electrode_img, (start_point[0] - electrode_img.get_width() // 2, start_point[1] - electrode_img.get_height() // 2))
+    screen.blit(electrode_img, (end_point[0] - electrode_img.get_width() // 2, end_point[1] - electrode_img.get_height() // 2))
+    
+    # Draw sliders
+    draw_slider(50, slider_y_positions['voltage'], slider_length, voltage, voltage_min, voltage_max, "Voltage", "V")
+    draw_slider(50, slider_y_positions['distance'], slider_length, 100* electrode_distance,100* distance_min, 100*distance_max, "Distance", "cm")
+    draw_slider(50, slider_y_positions['pressure'], slider_length, pressure, pressure_min, pressure_max, "Pressure", "kPa")
+    debug_log(f"Slider-adjusted Pressure: {pressure}")
+    
+    if event.type == pygame.MOUSEBUTTONDOWN:
+        for button in buttons:
+            if button["rect"].collidepoint(event.pos):
+                current_gas = button["label"]
+                print(f"Gas changed to: {current_gas}")
+    # Render buttons
+    for button in buttons:
+        if button["label"] == current_gas:
+            color = (0, 255, 0)  # Green for the selected button
+        else:
+            color = (200, 200, 200)  # Default gray for unselected buttons
+        
+        pygame.draw.rect(screen, color, button["rect"])  # Button background
+        pygame.draw.rect(screen, (0, 0, 0), button["rect"], 2)  # Button border
+        
+        # Render the label text
+        text = font.render(button["label"], True, (0, 0, 0))  # Black text
+        text_rect = text.get_rect(center=button["rect"].center)
+        screen.blit(text, text_rect)
+
+    pygame.display.flip()
+    
+pygame.quit()
